@@ -132,7 +132,7 @@ async def fetch_web_content(url):
                 # 1st parent: tool/
                 # 2nd parent: search_agent/
                 # 3rd parent: xiongan_agent/
-                base_dir = current_file.parent.parent.parent
+                base_dir = current_file.parent.parent
 
                 # 3. 定义输出目录
                 output_dir = base_dir / "search_result" / "mcp_fetch"

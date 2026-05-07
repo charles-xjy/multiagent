@@ -48,7 +48,7 @@ def duckduckgo_search(query):
 
             # ✅ 修复点 2：路径处理建议使用 / 运算符，更符合 pathlib 规范
             current_file = Path(__file__).resolve()
-            base_dir = current_file.parent.parent.parent
+            base_dir = current_file.parent.parent
             output_dir = base_dir / "search_result" / "duckduckgo"
             output_dir.mkdir(parents=True, exist_ok=True)
 

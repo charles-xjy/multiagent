@@ -249,7 +249,7 @@ def pdf2md(input_path):
         return f"❌ 错误：路径 {input_path} 不是一个有效的 PDF 文件。本工具当前设定为单文件解析模式。"
 
     print(f"🚀 [MinerU] 正在解析单个文档: {input_path.name}")
-    output_dir = Path("/home/charles/mycode/multiagent/xiongan_agent/search_result/pdf2md")
+    output_dir = Path("/home/charles/mycode/multiagent/xiongan_agent/search_agent/search_result/pdf2md")
     try:
         # 2. 调用 MinerU 执行解析
         asyncio.run(

@@ -1,7 +1,7 @@
 import os
 import re
 from pathlib import Path
-
+import httpx
 from playwright.sync_api import sync_playwright
 from langchain_core.tools import tool
 
@@ -21,6 +21,29 @@ def export_webpage_to_pdf(query: str, url: str):
         返回:
             str: 导出的 PDF 文件在本地的绝对路径。如果导出失败，将返回错误描述。
         """
+
+    def sanitize_filename(filename: str) -> str:
+        """清洗文件名，移除操作系统不允许的特殊字符"""
+        return re.sub(r'[\\/*?:"<>|]', "_", filename).strip()
+
+    current_file = Path(__file__).resolve()
+    base_dir = current_file.parent.parent
+    output_dir = base_dir / "search_result" / "download_pdf" / f"{query}"
+
+    if url.lower().split('?')[0].endswith('.pdf'):
+        print(f"检测到直接 PDF 链接，正在下载: {url}")
+        try:
+            clean_title = sanitize_filename(url.split('/')[-1]) or "document.pdf"
+            output_path = str(output_dir / clean_title)
+
+            with httpx.Client(follow_redirects=True) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                with open(output_path, "wb") as f:
+                    f.write(resp.content)
+            return output_path
+        except Exception as e:
+            return f"直接下载 PDF 失败: {str(e)}"
     # 启动 playwright 引擎
     with sync_playwright() as p:
         # 启动 Chromium 浏览器（headless=True 表示无头模式，不弹出肉眼可见的窗口）
@@ -33,6 +56,7 @@ def export_webpage_to_pdf(query: str, url: str):
         # 访问网页，wait_until='networkidle' 非常关键！
         # 它意味着等待网页上所有网络请求都几乎停止了（即动态数据都加载完了）才继续
         page.goto(url, wait_until="load")
+        page.wait_for_timeout(1000)
         page.emulate_media(media="screen")
         raw_title = page.title() or "untitled"
 
@@ -46,7 +70,7 @@ def export_webpage_to_pdf(query: str, url: str):
         clean_title = sanitize_filename(raw_title)
 
         current_file = Path(__file__).resolve()
-        base_dir = current_file.parent.parent.parent
+        base_dir = current_file.parent.parent
         output_dir = base_dir / "search_result" / "download_pdf" / f"{query}"
         output_path = os.path.join(output_dir, f"{clean_title}.pdf")
 

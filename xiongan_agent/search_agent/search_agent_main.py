@@ -1,7 +1,9 @@
+import asyncio
+
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.redis import RedisSaver
+from langgraph.checkpoint.redis import AsyncRedisSaver
 
 # 直接从 tool 包导入
 from tool import duckduckgo_search, langgraph_fetch_web_content, export_webpage_to_pdf, pdf2md
@@ -32,49 +34,92 @@ system_prompt = """你是一个深度信息调研助手。
 - 严禁仅根据搜索摘要（Snippet）回答。
 - 必须确保至少有一个 URL 的深度内容（Markdown/正文）被成功获取。
 - 若网页具有复杂的排版或公式，优先使用 PDF 转 MD 路径以保证信息还原度。"""
-tools = [duckduckgo_search, langgraph_fetch_web_content, export_webpage_to_pdf, pdf2md]
-# tools = [duckduckgo_search, export_webpage_to_pdf, pdf2md]
 
-DB_URI = "redis://localhost:6379"
-with RedisSaver.from_conn_string(DB_URI) as checkpointer:
-    checkpointer.setup()
+
+async def create_search_subgraph(checkpointer=None):
+    """
+    创建一个 CompiledGraph 实例。
+    - 如果传入 checkpointer，它就拥有独立记忆。
+    - 如果不传，它就是一个纯函数工具。
+    """
+    tools = [duckduckgo_search, langgraph_fetch_web_content, export_webpage_to_pdf, pdf2md]
+    # tools = [duckduckgo_search, export_webpage_to_pdf, pdf2md]
+
+    # 这里的 agent 可以是 LangGraph 的 CompiledGraph
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=system_prompt,
         checkpointer=checkpointer
     )
+    return agent
 
 
-def main():
-    config = {
-        "configurable": {
-            "thread_id": "search_agent"
-        }
-    }
-    inputs = {"messages": [HumanMessage(content="请介绍故宫午门")]}
-    for chunk in agent.stream(
-            inputs,
-            config, stream_mode="updates",
-            version="v2",
-    ):
-        if chunk["type"] == "updates":
-            for node_name, node_update in chunk["data"].items():
-                if "messages" in node_update:
-                    for msg in node_update["messages"]:
-                        print(f"\n--- 节点 [{node_name}] 输出 ---")
-                        msg.pretty_print()
+# --- 2. 独立运行入口 (Standalone Mode) ---
+async def run_as_standalone():
+    """
+    当此文件被直接运行时，作为一个独立的智能体启动
+    """
+    DB_URI = "redis://localhost:6379"
+    async with AsyncRedisSaver.from_conn_string(DB_URI) as saver:
+        # 传入独立的 checkpointer 实现独立记忆
+        agent = await create_search_subgraph(checkpointer=saver)
+
+        config = {"configurable": {"thread_id": "search_test_001"}}
+        inputs = {
+            "messages": [HumanMessage(content="请介绍雄安新区")]}
+
+        print("🤖 独立智能体模式启动...")
+        async for chunk in agent.astream(
+                inputs,
+                config,
+                stream_mode="updates",
+                version="v2",
+        ):
+            if chunk["type"] == "updates":
+                for node_name, node_update in chunk["data"].items():
+                    if "messages" in node_update:
+                        for msg in node_update["messages"]:
+                            print(f"\n--- 节点 [{node_name}] 输出 ---")
+                            # pretty_print 会根据消息类型自动格式化输出
+                            msg.pretty_print()
+
+
+# --- 3. 作为子图节点 (Subgraph Node Mode) ---
+async def image_agent_node(state, config):
+    """
+    当被主图调用时，作为主图的一个节点。
+    """
+    # 这里你可以选择是否为子图创建全新的独立 Redis 连接
+    # 或者从 config 中提取主图的连接，但使用不同的 thread_id
+    async with AsyncRedisSaver.from_conn_string("redis://localhost:6379") as sub_saver:
+        agent = await create_search_subgraph(checkpointer=sub_saver)
+
+        # 🌟 实现独立记忆的关键：
+        # 这里使用一个固定的、或与父 thread 相关联但不相等的 sub_thread_id
+        parent_thread = config["configurable"].get("thread_id", "default")
+        sub_config = {"configurable": {"thread_id": f"sub_mem_{parent_thread}"}}
+
+        # 只取主图传给它的最后一条需求
+        inputs = {"messages": [state["messages"][-1]]}
+        result = await agent.ainvoke(inputs, sub_config)
+
+        return {"messages": [result["messages"][-1]]}
 
 
 if __name__ == "__main__":
-    main()
+    # --- 4. 运行判断 ---
+    # 如果直接 python 运行此文件，执行独立模式
+    asyncio.run(run_as_standalone())
+    # docker exec redis-stack-server redis-cli keys "checkpoint:standalone_test_001:*" | xargs -I {} docker exec redis-stack-server redis-cli del "{}"
+
     # 查看记忆内容
     from langgraph.checkpoint.redis import RedisSaver
 
     connection_str = "redis://localhost:6379"
 
     with RedisSaver.from_conn_string(connection_str) as checkpointer:
-        config = {"configurable": {"thread_id": "search_agent"}}
+        config = {"configurable": {"thread_id": "search_test_001"}}
         print(f"--- 正在查询 Thread ID: search_agent 的所有 Checkpoints ---")
 
         # 使用 list() 获取所有快照
@@ -103,3 +148,4 @@ if __name__ == "__main__":
                 print(f"  - [{m_type}]: {display_content}")
 
             print("-" * 50)
+# docker exec redis-stack-server redis-cli keys "checkpoint:search_agent:*" | xargs -I {} docker exec redis-stack-server redis-cli del "{}"
