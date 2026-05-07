@@ -7,3 +7,5 @@
 /xiongan_agent/search_result/
 /home/charles/mycode/multiagent/xiongan_agent/search_agent/.env
 /home/charles/mycode/multiagent/xiongan_agent/search_agent/.langgraph_api
+/xiongan_agent/search_agent/.env
+/xiongan_agent/image_agent/.env
